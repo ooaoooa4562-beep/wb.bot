@@ -5,15 +5,14 @@ import json
 import os
 from datetime import datetime
 from aiohttp import web
-from aiogram import Bot
-from aiogram.types import URLInputFile
+from telegram import Bot
+from telegram.constants import ParseMode
 
-# ================== НАСТРОЙКИ ==================
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL_ID = os.environ["CHANNEL_ID"]
 PORT = int(os.environ.get("PORT", 8080))
 
-POST_INTERVAL = 1800       # 30 мин между постами
+POST_INTERVAL = 1800
 POSTS_PER_CYCLE = 1
 SEEN_FILE = "seen.json"
 
@@ -46,11 +45,9 @@ HEADERS = {
 }
 
 bot = Bot(token=BOT_TOKEN)
-
 stats = {"posted": 0, "started": datetime.now().strftime("%Y-%m-%d %H:%M")}
 
 
-# ================== ХРАНИЛИЩЕ ==================
 def load_seen():
     if os.path.exists(SEEN_FILE):
         try:
@@ -67,7 +64,6 @@ def save_seen(seen):
         print("save_seen error:", e)
 
 
-# ================== WB API ==================
 async def search_wb(session, query):
     url = "https://search.wb.ru/exactmatch/ru/common/v5/search"
     params = {
@@ -102,7 +98,6 @@ def image_url(p):
             f"vol{vol}/part{part}/{pid}/images/big/1.webp")
 
 
-# ================== ПОСТИНГ ==================
 async def send_product(p):
     name = p.get("name", "Товар")
     brand = p.get("brand", "")
@@ -119,31 +114,25 @@ async def send_product(p):
     if rating:
         caption += f"⭐ {rating} ({feedbacks} отзывов)\n"
     caption += f"\n🔗 <a href='{link}'>Открыть на Wildberries</a>"
-try:
+
+    try:
         await bot.send_photo(
-            CHANNEL_ID,
-            URLInputFile(image_url(p)),
+            chat_id=CHANNEL_ID,
+            photo=image_url(p),
             caption=caption,
-            parse_mode="HTML",
+            parse_mode=ParseMode.HTML,
         )
         return True
     except Exception as e:
         print(f"send {pid} err: {e}")
         return False
-
-
-# ================== ВЕБ-СЕРВЕР (для Render) ==================
 async def handle_root(request):
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>WB Bot</title>
-<style>body{{font-family:sans-serif;padding:40px;background:#f5f5f5}}
-.card{{background:white;padding:30px;border-radius:12px;max-width:500px;margin:auto}}</style>
-</head><body><div class="card">
+    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>WB Bot</title></head><body style="font-family:sans-serif;padding:40px">
 <h1>🤖 WB Bot работает</h1>
-<p>Опубликовано товаров: <b>{stats['posted']}</b></p>
+<p>Опубликовано: <b>{stats['posted']}</b></p>
 <p>Запущен: {stats['started']}</p>
-<p>Статус: ✅ активен</p>
-</div></body></html>"""
+</body></html>"""
     return web.Response(text=html, content_type="text/html")
 
 
@@ -158,12 +147,10 @@ async def start_web():
     print(f"🌐 Web server на порту {PORT}")
 
 
-# ================== ГЛАВНЫЙ ЦИКЛ ==================
 async def main():
     asyncio.create_task(start_web())
-
     seen = load_seen()
-    print(f"✅ Старт. Уже опубликовано: {len(seen)}")
+    print(f"✅ Старт. Опубликовано ранее: {len(seen)}")
     cycle = 0
 
     async with aiohttp.ClientSession() as session:
@@ -172,7 +159,6 @@ async def main():
             print(f"\n🔎 Цикл {cycle+1}: {cat['name']}")
             products = await search_wb(session, cat["query"])
             print(f"   Найдено: {len(products)}")
-
             fresh = [p for p in products if p["id"] not in seen]
             print(f"   Новых: {len(fresh)}")
 
