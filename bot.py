@@ -3,14 +3,17 @@ import aiohttp
 import random
 import json
 import os
+from datetime import datetime
+from aiohttp import web
 from aiogram import Bot
 from aiogram.types import URLInputFile
 
 # ================== НАСТРОЙКИ ==================
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHANNEL_ID = os.environ["CHANNEL_ID"]
+PORT = int(os.environ.get("PORT", 8080))
 
-POST_INTERVAL = 1800       # 30 минут между постами (потом поменяешь)
+POST_INTERVAL = 1800       # 30 мин между постами
 POSTS_PER_CYCLE = 1
 SEEN_FILE = "seen.json"
 
@@ -44,7 +47,10 @@ HEADERS = {
 
 bot = Bot(token=BOT_TOKEN)
 
+stats = {"posted": 0, "started": datetime.now().strftime("%Y-%m-%d %H:%M")}
 
+
+# ================== ХРАНИЛИЩЕ ==================
 def load_seen():
     if os.path.exists(SEEN_FILE):
         try:
@@ -61,6 +67,7 @@ def save_seen(seen):
         print("save_seen error:", e)
 
 
+# ================== WB API ==================
 async def search_wb(session, query):
     url = "https://search.wb.ru/exactmatch/ru/common/v5/search"
     params = {
@@ -95,6 +102,7 @@ def image_url(p):
             f"vol{vol}/part{part}/{pid}/images/big/1.webp")
 
 
+# ================== ПОСТИНГ ==================
 async def send_product(p):
     name = p.get("name", "Товар")
     brand = p.get("brand", "")
@@ -111,8 +119,7 @@ async def send_product(p):
     if rating:
         caption += f"⭐ {rating} ({feedbacks} отзывов)\n"
     caption += f"\n🔗 <a href='{link}'>Открыть на Wildberries</a>"
-
-    try:
+try:
         await bot.send_photo(
             CHANNEL_ID,
             URLInputFile(image_url(p)),
@@ -125,11 +132,41 @@ async def send_product(p):
         return False
 
 
+# ================== ВЕБ-СЕРВЕР (для Render) ==================
+async def handle_root(request):
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>WB Bot</title>
+<style>body{{font-family:sans-serif;padding:40px;background:#f5f5f5}}
+.card{{background:white;padding:30px;border-radius:12px;max-width:500px;margin:auto}}</style>
+</head><body><div class="card">
+<h1>🤖 WB Bot работает</h1>
+<p>Опубликовано товаров: <b>{stats['posted']}</b></p>
+<p>Запущен: {stats['started']}</p>
+<p>Статус: ✅ активен</p>
+</div></body></html>"""
+    return web.Response(text=html, content_type="text/html")
+
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get("/", handle_root)
+    app.router.add_get("/health", lambda r: web.Response(text="ok"))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+    print(f"🌐 Web server на порту {PORT}")
+
+
+# ================== ГЛАВНЫЙ ЦИКЛ ==================
 async def main():
+    asyncio.create_task(start_web())
+
     seen = load_seen()
     print(f"✅ Старт. Уже опубликовано: {len(seen)}")
     cycle = 0
-async with aiohttp.ClientSession() as session:
+
+    async with aiohttp.ClientSession() as session:
         while True:
             cat = CATEGORIES[cycle % len(CATEGORIES)]
             print(f"\n🔎 Цикл {cycle+1}: {cat['name']}")
@@ -148,6 +185,7 @@ async with aiohttp.ClientSession() as session:
                     if await send_product(p):
                         seen.add(p["id"])
                         save_seen(seen)
+                        stats["posted"] += 1
                         posted += 1
                         print(f"   ✅ Опубликован {p['id']}")
                         await asyncio.sleep(POST_INTERVAL)
